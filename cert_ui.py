@@ -1,9 +1,14 @@
-"""."""
+"""Для создания сертификатов.
+
+Почта отправителя и пароль к ней хранятся в email.txt.
+"""
 from PIL import Image, ImageDraw, ImageFont
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import smtplib
-from email.message import EmailMessage
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 
 PATH = 'nameless.png'
 global_name_coords = (421, 263)
@@ -94,8 +99,6 @@ MONTHS_DICT = {
     '12': 'декабря',
 }
 
-theCert = None
-
 
 class Certicate():
     """Автосоздание сертификатов."""
@@ -119,6 +122,7 @@ class Certicate():
         self.font_name = font_name
         self.size = size
         self.emails = emails
+        self.new_date = []
 
     def create_one(self, name, date):
         """Создание  одного сертификата."""
@@ -132,6 +136,7 @@ class Certicate():
         name_coords = list(global_name_coords)
         name_set = list(set(list(name)))
         width = 0
+        # Считаем ширину имени
         for j in name_set:
             width += name.count(j) * WIDTH_DICT[j]
         name_coords[0] -= int(width / 2)
@@ -141,11 +146,13 @@ class Certicate():
         date2 = MONTHS_DICT[date[1]]
         date = f'{date1} {date2} {date[2].strip()} г.'
 
+        # Понадобится для персонализации текста в письме
+        self.new_date.append(date)
+
         draw.text(name_coords, name,
                   fill=self.colour, font=font_name)
         draw.text(self.date_coords, date,
                   fill=self.colour, font=font_date)
-        # remake to mond medium 12
         img.save(f'Автобаза. Сертификат. {name}.pdf')
 
     def create_certs(self):
@@ -154,65 +161,99 @@ class Certicate():
             self.create_one(self.names[i], self.dates[i])
 
     def create_demo(self):
-        """демо создание."""
+        """Демо создание."""
         self.create_one("Иванов Иван Иванович", "01.12.2025")
 
     def get_info(self):
+        """Получение списков имён и соответствующих почт."""
         return [self.names, self.emails]
+
+    def get_dates(self):
+        """Получение списка дат."""
+        return self.new_date
+
+
+theCert = Certicate()
 
 
 class Message:
     """Отправка email."""
+
     def __init__(self, email, password):
         """."""
         self.email = email
         self.password = password
-        self.msg = EmailMessage()
+        self.msg = MIMEMultipart()
 
     def create_message(self, to_list, subject_text='',
-                       content='', att_list=[], filename='name'):
+                       content='', att_list=[], filename='name',
+                       server='smtp.gmail.com'):
         """Формировка сообщения."""
-        self.msg['Subject'] = subject_text  # тема
-        self.msg["From"] = self.email  # от кого
-        self.msg["To"] = ', '.join(to_list)  # кому
-        self.msg.set_content(content)
+        self.msg = MIMEMultipart()
+        self.msg['Subject'] = subject_text
+        self.msg["From"] = self.email
+        self.msg["To"] = ', '.join(to_list)
+        self.server = server
+
+        # Текстовая часть
+        text_part = MIMEText(content, 'plain', 'utf-8')
+        self.msg.attach(text_part)
+
         if att_list:
             if not isinstance(att_list, list):
                 att_list = [att_list]
             for i in att_list:
-                self.msg.add_attachment(i, maintype='document',
-                                        subtype='pdf',
-                                        filename=filename)
+                att_part = MIMEApplication(i, _subtype='pdf')
+                att_part.add_header('Content-Disposition', 'attachment', 
+                                    filename=filename)
+                self.msg.attach(att_part)
 
     def send_message(self):
-        """."""
-        smtpobj = smtplib.SMTP('smtp.gmail.com', 587)
+        """Отправка сообщения."""
+        smtpobj = smtplib.SMTP(self.server, 587)
         # шифровка
         smtpobj.starttls()
         # login (emailer_app password)
         smtpobj.login(self.email, self.password)
         smtpobj.send_message(self.msg)
-        self.msg = EmailMessage()
+        smtpobj.quit()
+        self.msg = MIMEMultipart()
 
-    def send_certs(self, cert, subject, text):
+    def send_certs(self, cert):
+        """Отправка сертификатов."""
         names, emails = cert.get_info()[0], cert.get_info()[1]
+        dates = cert.get_dates()
+
+        subject = 'Автобаза: электронный сертификат об успешном прохождении базового курса'
+        text = """Добрый день, {name}! 
+
+Благодарим вас за участие в вебинаре по применению программного продукта Автобаза {date} Во вложении к этому письму вы найдете электронный сертификат, подтверждающий успешное прохождение базового курса. 
+
+С уважением, команда Автобаза"""
+
         if len(names) != len(emails):
             raise ValueError
         for i in range(len(names)):
             with open(f'Автобаза. Сертификат. {names[i]}.pdf', "rb") as c:
                 att = c.read()
+                # Создаём персонализированные названия сертификатов и тексты
                 filename = f'Автобаза. Сертификат. {names[i]}.pdf'
-                # , maintype='document', subtype='pdf', filename=filename
+
+                text1 = text.format(name=names[i], date=dates[i])
+
                 self.create_message([emails[i]], subject_text=subject,
-                                    content=text, att_list=att,
+                                    content=text1, att_list=att,
                                     filename=filename)
                 self.send_message()
 
 
-def send_all():
-    global theCert
-    msg = Message('', '')
-    msg.send_certs(theCert, subject='Тестим сноооваааа', text='lololoоаоао')
+# def send_all():
+#     global theCert
+#     with open('email.txt', 'r') as info:
+#         email = info.readline()
+#         password = info.readline()
+#     msg = Message(email, password)
+#     msg.send_certs(theCert, subject='Тестим сноооваааа', text='lololoоаоао')
 
 
 def my_process_function(array):
@@ -232,8 +273,7 @@ def my_process_function(array):
     theCert = Certicate(PATH, names=names, dates=dates,
                         date_coords=DATE_COORDS, emails=emails)
     theCert.create_certs()
-    print(theCert.emails)
-    send_all()
+    # send_all()
 
     return None
 
@@ -258,31 +298,31 @@ class SimpleArrayGUI:
 
         # Заголовок
         title_label = ttk.Label(main_frame,
-                                text="Введите имена и фамилии (всё с новой строки)",
+                                text="Введите всё с новой строки",
                                 font=("Arial", 12))
         title_label.pack(pady=(0, 10))
 
         # Область ввода текста
         self.text_area = scrolledtext.ScrolledText(main_frame, height=15)
         self.text_area.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
+
         # Фрейм для кнопок
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=(0, 10))
-        
+
         # Кнопка вставки из буфера обмена
         paste_btn = ttk.Button(button_frame, text="Вставить из буфера",
                                command=self.paste_from_clipboard)
         paste_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
+
         # Кнопка обработки
         process_btn = ttk.Button(button_frame, text="Создать сертификаты",
-                                      command=self.get_array_data)
+                                 command=self.get_array_data)
         process_btn.pack(side=tk.LEFT)
 
         send_btn = ttk.Button(button_frame, text="Отправить сертификаты",
-                                      command=self.get_array_data)
-        process_btn.pack(side=tk.LEFT)
+                              command=self.send_window)
+        send_btn.pack()
 
         # Метка для вывода количества строк
         self.count_label = ttk.Label(main_frame, text="")
@@ -293,13 +333,13 @@ class SimpleArrayGUI:
         try:
             # Получаем текст из буфера обмена
             clipboard_text = self.root.clipboard_get()
-            
+
             # Вставляем в текущую позицию курсора
             self.text_area.insert(tk.INSERT, clipboard_text)
-            
+
             # Прокручиваем до конца
             self.text_area.see(tk.END)
-            
+
         except tk.TclError:
             # Если буфер обмена пуст или недоступен
             self.count_label.config(text="Буфер обмена пуст")
@@ -320,7 +360,6 @@ class SimpleArrayGUI:
     def get_array_data(self):
         """Нажатие кнопки - получает массив и передаёт в функцию обработки."""
         array = self.get_array()
-        print('ARRAY: ', array)
 
         # Обновляем метку с количеством строк
         count = len(array)
@@ -334,19 +373,69 @@ class SimpleArrayGUI:
                 self.count_label.config(text=f"Создано {len(array)//2 if len(array)%2==0 else 'ошибка'} сертификатов")
             except Exception as e:
                 self.count_label.config(text=f"Ошибка обработки: {e}")
-                print(f"Ошибка обработки: {e}")
-        
+
         my_process_function(array)
 
+    def send_all(self):
+        """Отправка всех сертификатов по почтам."""
+        global theCert
+        with open('email.txt', 'r') as info:
+            email = info.readline()
+            password = info.readline()
+            theCert.server = info.readline()
+        msg = Message(email, password)
+ 
+        try:
+            msg.send_certs(theCert)
+        except Exception as e:
+            self.think_lbl = tk.Label(self.sender_window,
+                                      text=e,
+                                      font=("Times New Roman", 15))
+        else:
+            self.think_lbl = tk.Label(self.sender_window,
+                                      text='Готово!',
+                                      font=("Times New Roman", 15))
+        self.think_lbl.pack()
 
-# Пример использования
+    def send_window(self):
+        """Окно подтверждения отправки."""
+        global theCert
+        self.sender_window = tk.Toplevel(self.root)
+        self.sender_window.geometry("1000x500")
+        self.sender_window.config(bg="#22D4D7")
+        self.sender_label = tk.Label(self.sender_window,
+                                     text='Вы точно хотите отправить письма?')
+        self.sender_label.pack()
+        self.sender_text = scrolledtext.ScrolledText(self.sender_window,
+                                                     width=120,
+                                                     height=10,
+                                                     font=("Times New Roman",
+                                                           15))
+        self.sender_text.pack()
+        self.sender_button = tk.Button(self.sender_window,
+                                       text='Отправить',
+                                       width=30,
+                                       height=5,
+                                       command=self.send_all)
+        self.sender_button.pack()
+
+        for i in range(len(theCert.emails)):
+            name = theCert.names[i]
+            email = theCert.emails[i]
+            txt = f'"Автобаза. Сертификат. {name}.pdf" отправится на {email}\n'
+            self.sender_text.insert(tk.INSERT, txt)
+        self.sender_text.see(tk.END)
+        # Делаем текст неменяемым
+        self.sender_text.configure(state='disabled')
+        self.sender_window.mainloop()
+
+
 # Пример использования
 def main():
     """."""
     root = tk.Tk()
 
     # Пример функции обработки - просто возвращает массив обратно
-
 
     # Создаём GUI
     app = SimpleArrayGUI(root)
